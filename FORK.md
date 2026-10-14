@@ -17,6 +17,12 @@ rebase.
   link (TorBox `requestdl`), so reconnects, seeks and resumes don't each call
   the provider API. A throttle that lasts past one wait drops the cached target
   and refreshes the link, instead of retrying the same link forever.
+- Uncached refusals: releases refused because no provider has them cached are
+  kept for 24 hours and listed at `GET /api/refusals/uncached`
+  (`queue_cleanup.record_uncached_refusals`, on by default). The arrs count
+  such a grab as skipped and retry it from their pending queue forever, so a
+  job next to the arrs uses the list to blocklist those pending items and let
+  the arr pick another release.
 
 ## Upstream commits from `beta` (after v2.7)
 
