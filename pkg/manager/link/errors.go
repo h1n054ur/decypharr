@@ -168,7 +168,10 @@ func ErrorCodeToLinkError(code string) *Error {
 	case "503", "read_pxy_timeout":
 		return NewRetryableError(Err503, code)
 	default:
-		return NewPermanentError(fmt.Errorf("unknown error code: %s", code), code)
+		// Unknown codes are more often transient than permanent. A wrong
+		// "retryable" costs a refetch, a wrong "permanent" makes the file
+		// unreadable (see failedValidationTTL).
+		return NewRetryableError(fmt.Errorf("unknown error code: %s", code), code)
 	}
 }
 
