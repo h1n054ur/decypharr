@@ -1,0 +1,118 @@
+# Builds the patched image on a Forgejo runner and pushes it to a container
+# registry. GitHub ignores this directory.
+#
+# The image uses upstream's Dockerfile with one kaniko change (see
+# .forgejo/Dockerfile.kaniko). Jobs get no Docker socket, so kaniko builds the
+# image in its own container and writes a tarball. regctl then pushes it in
+# 50 MB chunks, for registries behind a proxy that refuses large request bodies.
+#
+# Repository settings (Actions):
+#   vars.IMAGE            image name without tag, e.g. registry.example.com/owner/decypharr
+#   vars.REGISTRY_USER    user for the registry login
+#   vars.REGISTRY_MIRROR  optional pull-through mirror (host:port, plain HTTP) for base images
+#   secrets.REGISTRY_TOKEN  registry token with package write access
+# Without REGISTRY_TOKEN or IMAGE the job only builds (a build check).
+name: image
+
+on:
+  push:
+    branches: ["main-patched"]
+  workflow_dispatch:
+    inputs:
+      check:
+        description: "Build even when the tag already exists (nothing is pushed)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ${{ vars.IMAGE }}
+  REGISTRY_USER: ${{ vars.REGISTRY_USER }}
+  REGISTRY_MIRROR: ${{ vars.REGISTRY_MIRROR }}
+  # Upstream version this branch is based on, plus the patch number.
+  TAG: v2.7-patched-1
+  VERSION: "2.7"
+  CHANNEL: stable
+  REGCTL_VERSION: v0.11.6
+  REGCTL_SHA256: 8e0e62a497fcdb8048d18aa927a139613176ba0531f412bc541044e28f9856bd
+
+jobs:
+  build:
+    runs-on: docker
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/osscontainertools/kaniko:v1.28.5-debug@sha256:d6d74217dc077acfd3094992e917c357080a2d3fdd1042a49e34e29a7e57c572
+    defaults:
+      run:
+        shell: sh
+    steps:
+      - name: Fetch regctl
+        run: |
+          set -eu
+          wget -q -O /kaniko/regctl "https://github.com/regclient/regclient/releases/download/${REGCTL_VERSION}/regctl-linux-amd64"
+          echo "${REGCTL_SHA256}  /kaniko/regctl" | sha256sum -c -
+          chmod +x /kaniko/regctl
+
+      - name: Log in and check the tag
+        id: tag
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          CHECK: ${{ inputs.check }}
+          HOME: /kaniko/home
+        run: |
+          set -eu
+          mkdir -p "$HOME"
+          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$IMAGE" ]; then
+            echo "no REGISTRY_TOKEN or IMAGE: build check only, nothing is pushed"
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          registry="${IMAGE%%/*}"
+          printf %s "$REGISTRY_TOKEN" | /kaniko/regctl registry login "$registry" -u "$REGISTRY_USER" --pass-stdin
+          /kaniko/regctl registry set "$registry" --blob-chunk 52428800 --blob-max 52428800
+          # Tags are never pushed twice: a new patch gets a new TAG.
+          if digest=$(/kaniko/regctl image digest "${IMAGE}:${TAG}" 2>/dev/null); then
+            echo "already pushed: ${IMAGE}:${TAG}@${digest}"
+            if [ "$CHECK" = "true" ]; then
+              echo "check requested: building without pushing"
+              echo "push=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "push=exists" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build with kaniko
+        if: steps.tag.outputs.push != 'exists'
+        env:
+          GIT_USERNAME: ${{ github.actor }}
+          GIT_PASSWORD: ${{ github.token }}
+        run: |
+          set -eu
+          host="${GITHUB_SERVER_URL#*://}"
+          dest="${IMAGE:-decypharr}:${TAG}"
+          set -- --context "git://${host}/${GITHUB_REPOSITORY}.git#${GITHUB_REF}#${GITHUB_SHA}" \
+            --dockerfile .forgejo/Dockerfile.kaniko \
+            --build-arg "VERSION=${VERSION}" --build-arg "CHANNEL=${CHANNEL}" \
+            --destination "$dest" \
+            --no-push --tar-path /kaniko/image.tar \
+            --snapshot-mode redo --skip-unused-stages
+          if [ -n "$REGISTRY_MIRROR" ]; then
+            set -- "$@" --registry-mirror "$REGISTRY_MIRROR" --insecure-registry "$REGISTRY_MIRROR"
+          fi
+          /kaniko/executor "$@"
+          ls -l /kaniko/image.tar
+
+      - name: Push in chunks
+        if: steps.tag.outputs.push == 'true'
+        env:
+          HOME: /kaniko/home
+        run: |
+          set -eu
+          /kaniko/regctl image import "${IMAGE}:${TAG}" /kaniko/image.tar
+          echo "pushed ${IMAGE}:${TAG}@$(/kaniko/regctl image digest "${IMAGE}:${TAG}")"
+          rm -f /kaniko/image.tar
