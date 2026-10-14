@@ -56,6 +56,7 @@ func (s *Server) WebRoutes() http.Handler {
 			r.Post("/arr/index/refresh", s.handleRefreshArrIndex)
 			r.Get("/arr/index", s.handleGetArrIndex)
 			r.Get("/arr/bindings", s.handleSearchArrBindings)
+			r.Get("/refusals/uncached", s.handleListUncachedRefusals)
 
 			// Repair / health-checker operations
 			r.Get("/repair/config", s.handleGetRepairConfig)

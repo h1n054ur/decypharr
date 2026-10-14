@@ -81,6 +81,16 @@ func (a Arr) IsZero() bool {
 // Sonarr/Radarr queue warnings/errors to an action.
 type QueueCleanup struct {
 	Rules []QueueCleanupRule `json:"rules,omitempty"`
+	// RecordUncachedRefusals keeps a short list of releases refused because the
+	// provider has not cached them, served at GET /api/refusals/uncached so a
+	// job next to the arrs can drop them from the arr's pending queue. nil
+	// means on.
+	RecordUncachedRefusals *bool `json:"record_uncached_refusals,omitempty"`
+}
+
+// RecordsUncachedRefusals reports whether uncached refusals are recorded.
+func (q QueueCleanup) RecordsUncachedRefusals() bool {
+	return q.RecordUncachedRefusals == nil || *q.RecordUncachedRefusals
 }
 
 // QueueCleanupRule maps a queue issue to a cleanup action.
