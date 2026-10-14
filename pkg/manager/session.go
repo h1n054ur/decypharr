@@ -405,6 +405,10 @@ type httpTransport struct {
 	base  int64
 	limit int64
 
+	// redirects, when set, holds resolved redirect targets shared across
+	// sessions (see redirectCache). nil disables reuse.
+	redirects *redirectCache
+
 	mu   sync.Mutex
 	last types.DownloadLink
 }
@@ -418,7 +422,11 @@ func (t *httpTransport) open(ctx context.Context, pos int64) (io.ReadCloser, err
 	t.last = dl
 	t.mu.Unlock()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dl.DownloadLink, nil)
+	target, cached := t.redirects.get(dl.DownloadLink)
+	if !cached {
+		target = dl.DownloadLink
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, link.NewPermanentError(err, "request_creation_failed")
 	}
@@ -434,7 +442,13 @@ func (t *httpTransport) open(ctx context.Context, pos int64) (io.ReadCloser, err
 
 	resp, err := t.client.Do(req)
 	if err != nil {
+		if cached {
+			t.redirects.drop(dl.DownloadLink)
+		}
 		return nil, link.ClassifyTransportError(err)
+	}
+	if !cached && (resp.StatusCode == http.StatusPartialContent || resp.StatusCode == http.StatusOK) && resp.Request != nil {
+		t.redirects.put(dl.DownloadLink, resp.Request.URL.String())
 	}
 	switch {
 	case resp.StatusCode == http.StatusPartialContent:
@@ -459,6 +473,13 @@ func (t *httpTransport) open(ctx context.Context, pos int64) (io.ReadCloser, err
 		status, header := resp.StatusCode, resp.Header
 		_, _ = io.CopyN(io.Discard, resp.Body, 512)
 		resp.Body.Close()
+		// A failing cached target is forgotten so the next open resolves the
+		// link again. A 429 keeps it: re-resolving would only add a provider
+		// API call while the account is hot (recover drops it if the
+		// throttle persists).
+		if cached && status != http.StatusTooManyRequests {
+			t.redirects.drop(dl.DownloadLink)
+		}
 		return nil, link.ClassifyStreamStatus(status, header)
 	}
 }
@@ -476,21 +497,37 @@ func (t *httpTransport) recover(ctx context.Context, err error, attempt int) err
 		if wait <= 0 {
 			wait = sessionBackoff(attempt)
 		}
-		return sleepCtx(ctx, min(wait, sessionMaxThrottleWait))
+		if err := sleepCtx(ctx, min(wait, sessionMaxThrottleWait)); err != nil {
+			return err
+		}
+		if attempt == 0 {
+			return nil // one throttle: same link after the wait
+		}
+		// The throttle persisted across a wait. Retrying the same link has
+		// been seen to never recover (streams stuck at 0 bytes until a
+		// restart), so forget the resolved target and mint a fresh link.
+		return t.refreshLast(ctx)
 	case lerr.ShouldRefetch(), lerr.ShouldDisableAccount():
-		t.mu.Lock()
-		bad := t.last
-		t.mu.Unlock()
-		if bad.Empty() {
-			return nil // nothing to invalidate; next open re-fetches
-		}
-		if _, rerr := t.refresh(ctx, bad); rerr != nil {
-			return rerr
-		}
-		return nil
+		return t.refreshLast(ctx)
 	default: // retryable: same link, short backoff
 		return sleepCtx(ctx, sessionBackoff(attempt))
 	}
+}
+
+// refreshLast drops the last link (and its resolved redirect target) and asks
+// for a fresh one. The next open uses whatever getLink then returns.
+func (t *httpTransport) refreshLast(ctx context.Context) error {
+	t.mu.Lock()
+	bad := t.last
+	t.mu.Unlock()
+	if bad.Empty() {
+		return nil // nothing to invalidate; next open re-fetches
+	}
+	t.redirects.drop(bad.DownloadLink)
+	if _, rerr := t.refresh(ctx, bad); rerr != nil {
+		return rerr
+	}
+	return nil
 }
 
 // usenetTransport serves a session body by pulling directly from a usenet
@@ -727,7 +764,8 @@ func (m *Manager) openSession(ctx context.Context, entry *storage.Entry, filenam
 		}
 	} else {
 		ht := &httpTransport{
-			client: m.streamClient,
+			client:    m.streamClient,
+			redirects: m.redirects,
 			getLink: func(ctx context.Context) (types.DownloadLink, error) {
 				return m.linkService.GetLink(ctx, entry, filename)
 			},
