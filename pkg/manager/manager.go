@@ -51,6 +51,8 @@ type Manager struct {
 	streamClient *http.Client
 	// redirects caches resolved provider redirect links for stream sessions.
 	redirects *redirectCache
+	// refusals remembers releases refused as not cached, for the arr side.
+	refusals *refusalLog
 
 	arrRecoveryMu          sync.RWMutex
 	arrRecovery            ArrRecovery
@@ -189,6 +191,7 @@ func New() *Manager {
 		ready:                  make(chan struct{}),
 		streamClient:           streamClient,
 		redirects:              newRedirectCache(),
+		refusals:               newRefusalLog(refusalTTL, refusalMax),
 		usenetTimeout:          usenetTimeout,
 		debridSpeedTestResults: xsync.NewMap[string, debridTypes.SpeedTestResult](),
 		activeStreams:          xsync.NewMap[string, *ActiveStream](),

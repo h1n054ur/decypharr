@@ -512,6 +512,23 @@ Rules are evaluated top-to-bottom, **first match wins**. Built-in catalog rules 
 `id`) always run before custom rules (those with a `match`), and unmatched warnings/errors are
 left untouched. Changes apply on the next cleanup cycle — **no restart required**.
 
+### Uncached refusals
+
+When a provider refuses a release because it is not cached, the arr marks the grab as skipped
+rather than failed and keeps retrying the same release from its pending queue. Decypharr keeps
+a short list of these refusals (24 hours, at most 1000) with the release name, info hash, arr
+name and time, and serves it at `GET /api/refusals/uncached` (API token required, optional
+`?since=<RFC 3339 time>`). A job that can reach the arr can then blocklist the matching pending
+items so the arr picks another release. On by default; turn it off with:
+
+```json
+{
+  "queue_cleanup": {
+    "record_uncached_refusals": false
+  }
+}
+```
+
 ### Built-in catalog rules
 
 | `id`                 | Triggered by                                            | Default action       |

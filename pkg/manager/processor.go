@@ -43,6 +43,7 @@ func (m *Manager) addNewTorrent(ctx context.Context, importReq *ImportRequest) e
 			m.logger.Warn().Msgf("Too many active downloads, marking as queued: %s", importReq.Magnet.Name)
 			return m.queueTorrentRetry(importReq)
 		}
+		m.recordRefusal(importReq, err)
 		return fmt.Errorf("failed to submit torrent to debrid: %w", err)
 	}
 
