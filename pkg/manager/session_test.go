@@ -603,3 +603,138 @@ func (t *scriptedTransport) open(ctx context.Context, pos int64) (io.ReadCloser,
 func (t *scriptedTransport) recover(ctx context.Context, err error, attempt int) error {
 	return t.recoverFn(ctx, err, attempt)
 }
+
+// redirectAPI fronts a CDN the way TorBox's requestdl?redirect=true does:
+// every hit is a provider API call answering with a redirect.
+func redirectAPI(t *testing.T, target string, hits *atomic.Int64) *httptest.Server {
+	t.Helper()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, target, http.StatusFound)
+	}))
+	t.Cleanup(api.Close)
+	return api
+}
+
+func TestSessionReusesResolvedRedirect(t *testing.T) {
+	data := testPattern(64 << 10)
+	cdn := newFakeCDN(data)
+	server := startCDN(t, cdn)
+	var apiHits atomic.Int64
+	api := redirectAPI(t, cdn.url(server, ""), &apiHits)
+
+	var url atomic.Value
+	url.Store(api.URL + "/requestdl")
+	cache := newRedirectCache()
+	newTr := func() *httpTransport {
+		tr := testTransport(server.Client(), &url, nil, nil)
+		tr.redirects = cache
+		return tr
+	}
+
+	cdn.cutAfter.Store(1000) // force a mid-body reconnect
+	s := newTestSession(t, newTr(), int64(len(data)))
+	got, err := io.ReadAll(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("byte mismatch")
+	}
+	if _, err := s.Seek(100, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(s); err != nil {
+		t.Fatal(err)
+	}
+
+	// A second reader of the same file shares the resolved target.
+	s2 := newTestSession(t, newTr(), int64(len(data)))
+	if _, err := io.ReadAll(s2); err != nil {
+		t.Fatal(err)
+	}
+	if n := apiHits.Load(); n != 1 {
+		t.Fatalf("provider API hit %d times, want 1 (reconnects must reuse the resolved target)", n)
+	}
+	if cdn.requests.Load() < 4 {
+		t.Fatalf("expected several CDN requests, got %d", cdn.requests.Load())
+	}
+}
+
+func TestSessionDropsResolvedRedirectWhenTargetDies(t *testing.T) {
+	data := testPattern(4 << 10)
+	cdn := newFakeCDN(data)
+	server := startCDN(t, cdn)
+	var apiHits atomic.Int64
+	api := redirectAPI(t, cdn.url(server, ""), &apiHits)
+
+	var url atomic.Value
+	url.Store(api.URL + "/requestdl")
+	cache := newRedirectCache()
+	tr := testTransport(server.Client(), &url, nil, nil)
+	tr.redirects = cache
+
+	s := newTestSession(t, tr, int64(len(data)))
+	if _, err := io.ReadAll(s); err != nil {
+		t.Fatal(err)
+	}
+	// Pretend the cached CDN target expired: it now 403s, the API redirect
+	// still leads to the working CDN.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "expired", http.StatusForbidden)
+	}))
+	t.Cleanup(dead.Close)
+	cache.put(url.Load().(string), dead.URL+"/file")
+	s2 := newTestSession(t, tr, int64(len(data)))
+	got, err := io.ReadAll(s2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("byte mismatch")
+	}
+	if n := apiHits.Load(); n != 2 {
+		t.Fatalf("provider API hit %d times, want 2 (resolve, then re-resolve after the target died)", n)
+	}
+}
+
+func TestSessionRefreshesLinkWhenThrottlePersists(t *testing.T) {
+	data := testPattern(4 << 10)
+	cdn := newFakeCDN(data)
+	cdn.validToken.Store("tok2")
+
+	// Requests for tok1 are always throttled (no Retry-After), as seen when a
+	// stream sits in the throttled branch forever.
+	var throttled atomic.Int64
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("tok") == "tok1" {
+			throttled.Add(1)
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		cdn.handler(w, r)
+	}))
+	t.Cleanup(front.Close)
+
+	var url atomic.Value
+	url.Store(front.URL + "/file?tok=tok1")
+	var refreshes atomic.Int64
+	tr := testTransport(front.Client(), &url, &refreshes, func() {
+		url.Store(front.URL + "/file?tok=tok2")
+	})
+
+	s := newTestSession(t, tr, int64(len(data)))
+	got, err := io.ReadAll(s)
+	if err != nil {
+		t.Fatalf("stream did not recover from a persistent throttle: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("byte mismatch")
+	}
+	if refreshes.Load() != 1 {
+		t.Fatalf("refreshes = %d, want 1", refreshes.Load())
+	}
+	if throttled.Load() != 2 {
+		t.Fatalf("throttled requests = %d, want 2 (one wait on the same link, then a fresh link)", throttled.Load())
+	}
+}

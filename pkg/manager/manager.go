@@ -49,6 +49,8 @@ type Manager struct {
 	ready        chan struct{}
 	readyOnce    sync.Once
 	streamClient *http.Client
+	// redirects caches resolved provider redirect links for stream sessions.
+	redirects *redirectCache
 
 	arrRecoveryMu          sync.RWMutex
 	arrRecovery            ArrRecovery
@@ -186,6 +188,7 @@ func New() *Manager {
 		ctx:                    ctx,
 		ready:                  make(chan struct{}),
 		streamClient:           streamClient,
+		redirects:              newRedirectCache(),
 		usenetTimeout:          usenetTimeout,
 		debridSpeedTestResults: xsync.NewMap[string, debridTypes.SpeedTestResult](),
 		activeStreams:          xsync.NewMap[string, *ActiveStream](),
