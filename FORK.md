@@ -30,6 +30,10 @@ rebase.
   one episode and remove the download after importing that one file. When
   every file sits under one root folder, the folder is reported as the name,
   as qBittorrent does for a multi-file torrent.
+- qBittorrent hashes: a `hashes` form value with several hashes joined by
+  `|` (the qBittorrent Web API format) is split into single hashes. Before,
+  the joined string was looked up as one hash, so `torrents/delete` with more
+  than one hash answered 200 and deleted nothing.
 
 ## Upstream commits from `beta` (after v2.7)
 
