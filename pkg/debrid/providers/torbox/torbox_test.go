@@ -260,3 +260,65 @@ func TestSubmitMagnetAcceptsObjectAndArrayResponses(t *testing.T) {
 		})
 	}
 }
+
+func TestTorrentNameUsesRootFolderWhenTorBoxNamesAFile(t *testing.T) {
+	var data torboxInfo
+	if err := json.Unmarshal([]byte(`{
+		"name": "Show.S33E06.Episode.1080p.WEB-DL-NTb.mkv",
+		"files": [
+			{"name": "Show.S33.1080p.WEBRip-NTb[rartv]/RARBG.txt"},
+			{"name": "Show.S33.1080p.WEBRip-NTb[rartv]/Show.S33E01.Episode.1080p.WEB-DL-NTb.mkv"},
+			{"name": "Show.S33.1080p.WEBRip-NTb[rartv]/Show.S33E06.Episode.1080p.WEB-DL-NTb.mkv"}
+		]}`), &data); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := torrentName(&data), "Show.S33.1080p.WEBRip-NTb[rartv]"; got != want {
+		t.Fatalf("torrentName = %q, want %q", got, want)
+	}
+}
+
+func TestTorrentNameKeepsTorBoxNameOtherwise(t *testing.T) {
+	cases := map[string]string{
+		"single file":     `{"name":"Movie.2020.mkv","files":[{"name":"Movie.2020.mkv"}]}`,
+		"single in dir":   `{"name":"Movie.2020","files":[{"name":"Movie.2020/Movie.2020.mkv"}]}`,
+		"no root folder":  `{"name":"Pack","files":[{"name":"a.mkv"},{"name":"b.mkv"}]}`,
+		"two roots":       `{"name":"Pack","files":[{"name":"A/a.mkv"},{"name":"B/b.mkv"}]}`,
+		"matching folder": `{"name":"Show.S01","files":[{"name":"Show.S01/e1.mkv"},{"name":"Show.S01/e2.mkv"}]}`,
+	}
+	for name, raw := range cases {
+		var data torboxInfo
+		if err := json.Unmarshal([]byte(raw), &data); err != nil {
+			t.Fatal(err)
+		}
+		want := data.Name
+		if got := torrentName(&data); got != want {
+			t.Errorf("%s: torrentName = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestGetTorrentReportsPackRootFolderName(t *testing.T) {
+	config.SetConfigPath(t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"success":true,"data":{"id":5,"name":"Show.S33E06.Ep.mkv","size":200,"progress":1,"download_state":"completed","download_finished":true,"created_at":"2026-01-02T03:04:05Z","hash":"ABC","files":[{"id":1,"name":"Show.S33.Pack/Show.S33E01.Ep.mkv","absolute_path":"Show.S33E01.Ep.mkv","size":100},{"id":2,"name":"Show.S33.Pack/Show.S33E06.Ep.mkv","absolute_path":"Show.S33E06.Ep.mkv","size":100}]}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	tb := testTorbox(server.URL)
+	got, err := tb.GetTorrent("5")
+	if err != nil {
+		t.Fatalf("GetTorrent() error = %v", err)
+	}
+	if got.Name != "Show.S33.Pack" || got.Filename != "Show.S33.Pack" || got.OriginalFilename != "Show.S33.Pack" {
+		t.Fatalf("names = %q/%q/%q, want the pack folder", got.Name, got.Filename, got.OriginalFilename)
+	}
+
+	upd := &types.Torrent{Id: "5"}
+	if err := tb.UpdateTorrent(upd); err != nil {
+		t.Fatalf("UpdateTorrent() error = %v", err)
+	}
+	if upd.Name != "Show.S33.Pack" {
+		t.Fatalf("UpdateTorrent name = %q, want the pack folder", upd.Name)
+	}
+}

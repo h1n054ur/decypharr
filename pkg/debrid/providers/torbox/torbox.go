@@ -400,13 +400,13 @@ func (tb *Torbox) GetTorrent(torrentId string) (*types.Torrent, error) {
 	t := &types.Torrent{
 		Id:               strconv.Itoa(data.Id),
 		InfoHash:         data.Hash,
-		Name:             data.Name,
+		Name:             torrentName(data),
 		Bytes:            data.Size,
 		Progress:         data.Progress * 100,
 		Status:           tb.getTorboxStatus(data.DownloadState, data.DownloadFinished),
 		Speed:            data.DownloadSpeed,
 		Seeders:          data.Seeds,
-		Filename:         data.Name,
+		Filename:         torrentName(data),
 		OriginalFilename: data.Name,
 		Debrid:           tb.config.Name,
 		Files:            make(map[string]types.File),
@@ -488,7 +488,7 @@ func (tb *Torbox) updateTorrentWithClient(client *request.Client, t *types.Torre
 		return fmt.Errorf("torbox API error: Status: %d", resp.StatusCode)
 	}
 	data := res.Data
-	name := data.Name
+	name := torrentName(data)
 
 	t.Name = name
 	t.Bytes = data.Size
@@ -664,13 +664,13 @@ func (tb *Torbox) getTorrents(offset int) ([]*types.Torrent, error) {
 	for _, data := range *res.Data {
 		t := &types.Torrent{
 			Id:               strconv.Itoa(data.Id),
-			Name:             data.Name,
+			Name:             torrentName(&data),
 			Bytes:            data.Size,
 			Progress:         data.Progress * 100,
 			Status:           tb.getTorboxStatus(data.DownloadState, data.DownloadFinished),
 			Speed:            data.DownloadSpeed,
 			Seeders:          data.Seeds,
-			Filename:         data.Name,
+			Filename:         torrentName(&data),
 			OriginalFilename: data.Name,
 			Debrid:           tb.config.Name,
 			Files:            make(map[string]types.File),
@@ -905,4 +905,34 @@ func (tb *Torbox) SpeedTest(ctx context.Context) types.SpeedTestResult {
 
 func (tb *Torbox) SupportsCheck() bool {
 	return true
+}
+
+// torrentName returns the name to report for a TorBox torrent. For a
+// multi-file torrent qBittorrent reports the root folder, and the arrs parse
+// that name to decide what the download covers. TorBox sometimes names a cached
+// season pack after one of its files (seen on rartv packs, e.g. "Show.S33E06...mkv"
+// for "Show.S33.../"), which made Sonarr treat a whole season as one episode
+// and remove the download after importing that single file. When every file
+// sits under one root folder, report that folder instead.
+func torrentName(data *torboxInfo) string {
+	if data == nil {
+		return ""
+	}
+	if len(data.Files) < 2 {
+		return data.Name
+	}
+	root := ""
+	for _, f := range data.Files {
+		clean := strings.TrimPrefix(path.Clean(f.Name), "/")
+		dir, _, found := strings.Cut(clean, "/")
+		if !found || dir == "" || dir == "." {
+			return data.Name
+		}
+		if root == "" {
+			root = dir
+		} else if dir != root {
+			return data.Name
+		}
+	}
+	return root
 }
