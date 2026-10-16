@@ -230,22 +230,31 @@ func extractFromSID(sid string) (string, string, error) {
 	return username, password, nil
 }
 
+// splitHashes turns qBittorrent "hashes" values into single hashes. The
+// qBittorrent Web API sends several hashes as one value joined by "|", so each
+// value is split, trimmed and stripped of empty parts.
+func splitHashes(values []string) []string {
+	var hashes []string
+	for _, value := range values {
+		for _, hash := range strings.Split(value, "|") {
+			if hash = strings.TrimSpace(hash); hash != "" {
+				hashes = append(hashes, hash)
+			}
+		}
+	}
+	return hashes
+}
+
 func hashesContext(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_hashes := chi.URLParam(r, "hashes")
-		var hashes []string
-		if _hashes != "" {
-			hashes = strings.Split(_hashes, "|")
-		}
-		if hashes == nil {
-			// GetReader hashes from form
+		var values []string
+		if _hashes := chi.URLParam(r, "hashes"); _hashes != "" {
+			values = []string{_hashes}
+		} else {
 			_ = r.ParseForm()
-			hashes = r.Form["hashes"]
+			values = r.Form["hashes"]
 		}
-		for i, hash := range hashes {
-			hashes[i] = strings.TrimSpace(hash)
-		}
-		ctx := context.WithValue(r.Context(), hashesKey, hashes)
+		ctx := context.WithValue(r.Context(), hashesKey, splitHashes(values))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
