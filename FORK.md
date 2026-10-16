@@ -24,6 +24,13 @@ rebase.
   job next to the arrs uses the list to blocklist those pending items and let
   the arr pick another release.
 
+- TorBox pack names: TorBox sometimes names a cached season pack after one of
+  its files (for example `Show.S33E06...mkv` for the folder `Show.S33.../`).
+  Reported as the qBittorrent name, that made Sonarr treat the whole season as
+  one episode and remove the download after importing that one file. When
+  every file sits under one root folder, the folder is reported as the name,
+  as qBittorrent does for a multi-file torrent.
+
 ## Upstream commits from `beta` (after v2.7)
 
 [#412](https://github.com/sirrobot01/decypharr/pull/412), [#440](https://github.com/sirrobot01/decypharr/pull/440), [#419](https://github.com/sirrobot01/decypharr/pull/419), [#422](https://github.com/sirrobot01/decypharr/pull/422), [#417](https://github.com/sirrobot01/decypharr/pull/417) and [#448](https://github.com/sirrobot01/decypharr/pull/448), cherry-picked
