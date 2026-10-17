@@ -22,10 +22,15 @@ const (
 // arr reads this list and blocklists the matching pending items, so the arr
 // moves on to another release.
 type Refusal struct {
-	Name     string    `json:"name"`
-	InfoHash string    `json:"info_hash"`
-	Category string    `json:"category"`
-	Reason   string    `json:"reason"`
+	Name     string `json:"name"`
+	InfoHash string `json:"info_hash"`
+	Category string `json:"category"`
+	Reason   string `json:"reason"`
+	// File, Provider and Error are set for dead items (GET /api/refusals/dead):
+	// the file whose link died and the provider's error code.
+	File     string    `json:"file,omitempty"`
+	Provider string    `json:"provider,omitempty"`
+	Error    string    `json:"error,omitempty"`
 	Time     time.Time `json:"time"`
 	Count    int       `json:"count"`
 }
@@ -60,6 +65,9 @@ func (l *refusalLog) record(r Refusal) {
 		old.Reason = r.Reason
 		if r.Name != "" {
 			old.Name = r.Name
+		}
+		if r.File != "" {
+			old.File, old.Provider, old.Error = r.File, r.Provider, r.Error
 		}
 		return
 	}

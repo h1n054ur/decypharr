@@ -53,6 +53,10 @@ type Manager struct {
 	redirects *redirectCache
 	// refusals remembers releases refused as not cached, for the arr side.
 	refusals *refusalLog
+	// deadLinks marks files whose provider says the item can't be served, so
+	// reads fail at once; deadItems lists them for the arr side.
+	deadLinks *deadLinks
+	deadItems *refusalLog
 
 	arrRecoveryMu          sync.RWMutex
 	arrRecovery            ArrRecovery
@@ -192,6 +196,8 @@ func New() *Manager {
 		streamClient:           streamClient,
 		redirects:              newRedirectCache(),
 		refusals:               newRefusalLog(refusalTTL, refusalMax),
+		deadLinks:              newDeadLinks(),
+		deadItems:              newRefusalLog(refusalTTL, refusalMax),
 		usenetTimeout:          usenetTimeout,
 		debridSpeedTestResults: xsync.NewMap[string, debridTypes.SpeedTestResult](),
 		activeStreams:          xsync.NewMap[string, *ActiveStream](),
