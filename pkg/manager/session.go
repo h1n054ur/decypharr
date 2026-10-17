@@ -409,11 +409,21 @@ type httpTransport struct {
 	// sessions (see redirectCache). nil disables reuse.
 	redirects *redirectCache
 
+	// dead, when set, tracks provider answers that the item can't be served
+	// (see deadLinks), keyed by deadKey. onDead runs once when this file is
+	// marked dead.
+	dead    *deadLinks
+	deadKey string
+	onDead  func(code string)
+
 	mu   sync.Mutex
 	last types.DownloadLink
 }
 
 func (t *httpTransport) open(ctx context.Context, pos int64) (io.ReadCloser, error) {
+	if code, dead := t.dead.dead(t.deadKey); dead {
+		return nil, deadLinkError(code)
+	}
 	dl, err := t.getLink(ctx)
 	if err != nil {
 		return nil, err
@@ -447,8 +457,11 @@ func (t *httpTransport) open(ctx context.Context, pos int64) (io.ReadCloser, err
 		}
 		return nil, link.ClassifyTransportError(err)
 	}
-	if !cached && (resp.StatusCode == http.StatusPartialContent || resp.StatusCode == http.StatusOK) && resp.Request != nil {
-		t.redirects.put(dl.DownloadLink, resp.Request.URL.String())
+	if resp.StatusCode == http.StatusPartialContent || resp.StatusCode == http.StatusOK {
+		t.dead.clear(t.deadKey)
+		if !cached && resp.Request != nil {
+			t.redirects.put(dl.DownloadLink, resp.Request.URL.String())
+		}
 	}
 	switch {
 	case resp.StatusCode == http.StatusPartialContent:
@@ -471,8 +484,17 @@ func (t *httpTransport) open(ctx context.Context, pos int64) (io.ReadCloser, err
 			fmt.Errorf("server ignored range request at offset %d", absStart), "no_range_support")
 	default:
 		status, header := resp.StatusCode, resp.Header
-		_, _ = io.CopyN(io.Discard, resp.Body, 512)
+		head, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		resp.Body.Close()
+		// A provider API behind a redirect link (TorBox requestdl) puts its
+		// error code in the body. A dead-item code is kept on the error so
+		// recover can count it; it stays retryable until it repeats.
+		if code := providerErrorCode(head); deadItemCodes[code] {
+			if cached {
+				t.redirects.drop(dl.DownloadLink)
+			}
+			return nil, link.NewRetryableError(fmt.Errorf("HTTP %d: provider answered %s", status, code), code)
+		}
 		// A failing cached target is forgotten so the next open resolves the
 		// link again. A 429 keeps it: re-resolving would only add a provider
 		// API call while the account is hot (recover drops it if the
@@ -488,6 +510,24 @@ func (t *httpTransport) recover(ctx context.Context, err error, attempt int) err
 	lerr := link.GetLinkError(err)
 	if lerr == nil {
 		lerr = link.ClassifyTransportError(err)
+	}
+	if isDeadItemCode(lerr) {
+		// The provider says the item can't be served. Try again a few times
+		// with backoff in case it is a blip, then mark the file dead so this
+		// and later reads fail at once instead of retrying without end.
+		if t.dead == nil {
+			return sleepCtx(ctx, deadLinkBackoff(attempt))
+		}
+		if t.dead.strike(t.deadKey, lerr.Code) {
+			if t.onDead != nil {
+				t.onDead(lerr.Code)
+			}
+			return deadLinkError(lerr.Code)
+		}
+		if code, dead := t.dead.dead(t.deadKey); dead {
+			return deadLinkError(code) // another reader marked it meanwhile
+		}
+		return sleepCtx(ctx, deadLinkBackoff(attempt))
 	}
 	switch {
 	case lerr.IsPermanent():
@@ -769,6 +809,11 @@ func (m *Manager) openSession(ctx context.Context, entry *storage.Entry, filenam
 			},
 			refresh: func(ctx context.Context, bad types.DownloadLink) (types.DownloadLink, error) {
 				return m.linkService.Refresh(ctx, entry, bad)
+			},
+			dead:    m.deadLinks,
+			deadKey: deadLinkKey(entry, filename),
+			onDead: func(code string) {
+				m.recordDeadItem(entry, filename, code)
 			},
 		}
 		if br := file.ByteRange; br != nil {

@@ -34,6 +34,20 @@ rebase.
   `|` (the qBittorrent Web API format) is split into single hashes. Before,
   the joined string was looked up as one hash, so `torrents/delete` with more
   than one hash answered 200 and deleted nothing.
+- Dead TorBox items: some items answer `requestdl` with HTTP 500 and
+  `DATABASE_ERROR` for every file, also after a re-add. Before, the read path
+  retried such a file without end (session resumes, chunk retries, a fresh
+  downloader per waiting read, the circuit breaker reset after its cooldown),
+  so a media probe over the mount hung until a restart. Now a dead-item code
+  in the provider's answer (`DATABASE_ERROR`, `ITEM_NOT_FOUND`,
+  `LINK_OFFLINE`) is retried with backoff, and after 3 such answers within
+  2 minutes (about 6 seconds of waits) the file is marked dead for 6 hours:
+  the read fails with EIO and later opens fail at once without a provider
+  call. A good answer clears the count, and plain 5xx answers keep the old
+  transient retry. Dead items are kept for 24 hours and listed at
+  `GET /api/refusals/dead` (hash, name, category, file, provider and error
+  code, newest first, `?since=<RFC 3339>` narrows it), so a job next to the
+  arrs can drop the download before an import reaches it.
 
 ## Upstream commits from `beta` (after v2.7)
 
