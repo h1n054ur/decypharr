@@ -20,6 +20,7 @@ type Debrid struct {
 	MinimumFreeSlot              int      `json:"minimum_free_slot,omitempty"` // Minimum active pots to use this debrid
 	Limit                        int      `json:"limit,omitempty"`             // Maximum number of total torrents
 	TorrentsRefreshInterval      string   `json:"torrents_refresh_interval,omitempty"`
+	RefreshMissingGrace          string   `json:"refresh_missing_grace,omitempty"` // Keep a fresh placement the remote list doesn't show yet, "0" turns it off
 	DownloadLinksRefreshInterval string   `json:"download_links_refresh_interval,omitempty"`
 	Workers                      int      `json:"workers,omitempty"`
 	AutoExpireLinksAfter         string   `json:"auto_expire_links_after,omitempty"`
@@ -57,6 +58,9 @@ func (c *Config) updateDebrid(d Debrid) Debrid {
 
 	if d.TorrentsRefreshInterval == "" {
 		d.TorrentsRefreshInterval = DefaultTorrentsRefreshInterval
+	}
+	if d.RefreshMissingGrace == "" {
+		d.RefreshMissingGrace = DefaultRefreshMissingGrace
 	}
 	if d.DownloadLinksRefreshInterval == "" {
 		d.DownloadLinksRefreshInterval = DefaultDownloadsRefreshInterval

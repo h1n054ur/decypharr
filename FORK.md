@@ -48,6 +48,14 @@ rebase.
   `GET /api/refusals/dead` (hash, name, category, file, provider and error
   code, newest first, `?since=<RFC 3339>` narrows it), so a job next to the
   arrs can drop the download before an import reaches it.
+- Refresh grace: TorBox's torrent list can lag a fresh add, so the refresh
+  right after an add found the pack missing and dropped it from the mount
+  while the queue still showed it complete. Imports in that gap failed with
+  file not found until the next refresh brought it back. Now a placement the
+  remote list doesn't show is kept while it was added or completed within
+  `refresh_missing_grace` (per debrid, default `30m`, `"0"` turns it off).
+  Deletes Decypharr makes itself remove the entry at once as before, and an
+  item the provider dropped goes on the first refresh after the grace.
 
 ## Upstream commits from `beta` (after v2.7)
 
