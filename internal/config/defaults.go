@@ -13,6 +13,7 @@ var (
 
 	DefaultRateLimit                = "250/minute"
 	DefaultTorrentsRefreshInterval  = "10m"
+	DefaultRefreshMissingGrace      = "30m"
 	DefaultDownloadsRefreshInterval = "5m"
 	DefaultAutoExpireLinksAfter     = "3d"
 

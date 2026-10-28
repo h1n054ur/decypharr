@@ -88,7 +88,8 @@ func (m *Manager) doRefreshTorrents(_ context.Context, provider string, debridCl
 	}
 
 	// Detect changes by streaming through cached entries
-	newTorrents, torrentsToUpdate, torrentsToDelete, err := m.detectTorrentChanges(provider, remoteTorrentsByHash)
+	grace := refreshMissingGrace(debridClient.Config().RefreshMissingGrace)
+	newTorrents, torrentsToUpdate, torrentsToDelete, err := m.detectTorrentChanges(provider, remoteTorrentsByHash, grace)
 	if err != nil {
 		return err
 	}
@@ -122,7 +123,9 @@ func (m *Manager) doRefreshTorrents(_ context.Context, provider string, debridCl
 }
 
 // detectTorrentChanges streams through cached entries and detects what changed
-func (m *Manager) detectTorrentChanges(provider string, remoteTorrentsByHash map[string]*types.Torrent) (
+// A placement missing from the remote list is kept while it was placed or completed
+// within grace: the provider's list can lag a fresh add by one refresh.
+func (m *Manager) detectTorrentChanges(provider string, remoteTorrentsByHash map[string]*types.Torrent, grace time.Duration) (
 	newTorrents []*types.Torrent,
 	torrentsToUpdate []*storage.Entry,
 	torrentsToDelete []string,
@@ -132,6 +135,7 @@ func (m *Manager) detectTorrentChanges(provider string, remoteTorrentsByHash map
 	torrentsToUpdate = make([]*storage.Entry, 0, 100)
 	torrentsToDelete = make([]string, 0, 10)
 	cachedInfoHashes := make(map[string]bool, len(remoteTorrentsByHash))
+	now := time.Now()
 
 	err = m.storage.ForEachBatch(refreshBatchSize, func(batch []*storage.Entry) error {
 		for _, entry := range batch {
@@ -141,7 +145,10 @@ func (m *Manager) detectTorrentChanges(provider string, remoteTorrentsByHash map
 			oldPlacement, placementOnDebrid := entry.Providers[provider]
 
 			if placementOnDebrid {
-				if !onRemote {
+				if !onRemote && placementSeenWithin(oldPlacement, grace, now) {
+					m.logger.Debug().Str("debrid", provider).Str("infohash", entry.InfoHash).Str("name", entry.Name).
+						Msg("Torrent not in the remote list yet, kept within the grace period")
+				} else if !onRemote {
 					entry.RemoveProvider(provider, nil)
 					if len(entry.Providers) == 0 {
 						torrentsToDelete = append(torrentsToDelete, entry.InfoHash)
@@ -175,6 +182,31 @@ func (m *Manager) detectTorrentChanges(provider string, remoteTorrentsByHash map
 	}
 
 	return newTorrents, torrentsToUpdate, torrentsToDelete, nil
+}
+
+// refreshMissingGrace parses the debrid's refresh_missing_grace. An invalid value falls back
+// to the default.
+func refreshMissingGrace(value string) time.Duration {
+	if value == "" {
+		value = config.DefaultRefreshMissingGrace
+	}
+	grace, err := utils.ParseDuration(value)
+	if err != nil || grace < 0 {
+		grace, _ = utils.ParseDuration(config.DefaultRefreshMissingGrace)
+	}
+	return grace
+}
+
+// placementSeenWithin reports whether the placement was added or completed within grace of now.
+func placementSeenWithin(p *storage.ProviderEntry, grace time.Duration, now time.Time) bool {
+	if p == nil || grace <= 0 {
+		return false
+	}
+	seen := p.AddedAt
+	if p.DownloadedAt != nil && p.DownloadedAt.After(seen) {
+		seen = *p.DownloadedAt
+	}
+	return !seen.IsZero() && now.Sub(seen) < grace
 }
 
 // handleTorrentDeletions processes torrent deletions concurrently
