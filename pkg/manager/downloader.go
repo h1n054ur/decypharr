@@ -115,8 +115,9 @@ func (d *Downloader) process(ctx context.Context, entry *storage.Entry, mountPat
 		return d.processSymlink(ctx, entry, mountPath)
 	case config.DownloadActionNone:
 		d.completeEntry(entry)
-		// Remove entry from queue
-		_ = d.manager.queue.Delete(entry.InfoHash, true, nil)
+		// This runs inside the entry's own tracked work, so it must not wait
+		// for that work to be cancelled.
+		_ = d.manager.queue.remove(entry.InfoHash, true, nil)
 		return nil
 	default:
 		return d.processSymlink(ctx, entry, mountPath)
@@ -613,18 +614,7 @@ func (d *Downloader) processTorrentDownload(ctx context.Context, entry *storage.
 	p := pool.New().WithErrors().WithFirstError().WithMaxGoroutines(maxWorkers)
 	for _, task := range tasks {
 		p.Go(func() error {
-			if err := d.localDownloader(
-				ctx,
-				task.link,
-				filepath.Join(downloadedFolder, task.file.Name),
-				task.file.ByteRange,
-				progressCallback,
-			); err != nil {
-				d.logger.Error().Msgf("Failed to download %s: %v", task.file.Name, err)
-				return err
-			}
-			d.logger.Info().Msgf("Downloaded %s", task.file.Name)
-			return nil
+			return d.downloadFile(ctx, task.link, filepath.Join(downloadedFolder, task.file.Name), task.file.ByteRange, progressCallback)
 		})
 	}
 
@@ -633,6 +623,26 @@ func (d *Downloader) processTorrentDownload(ctx context.Context, entry *storage.
 	}
 	d.completeEntry(entry)
 	d.logger.Info().Msgf("Downloaded all files for %s", entry.Name)
+	return nil
+}
+
+// downloadFile downloads one file of an entry. If the entry is deleted while
+// the file is downloading, the partial file is removed.
+func (d *Downloader) downloadFile(ctx context.Context, downloadURL, destPath string, byterange *[2]int64, progressCallback func(int64, int64)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	name := filepath.Base(destPath)
+	if err := d.localDownloader(ctx, downloadURL, destPath, byterange, progressCallback); err != nil {
+		if isEntryDeleted(ctx) {
+			_ = os.Remove(destPath)
+			d.logger.Info().Msgf("Stopped downloading %s: entry deleted", name)
+			return context.Cause(ctx)
+		}
+		d.logger.Error().Msgf("Failed to download %s: %v", name, err)
+		return err
+	}
+	d.logger.Info().Msgf("Downloaded %s", name)
 	return nil
 }
 

@@ -50,9 +50,9 @@ rebase.
   2 minutes (about 6 seconds of waits) the file is marked dead for 6 hours:
   the read fails with EIO and later opens fail at once without a provider
   call. A good answer clears the count, and plain 5xx answers keep the old
-  transient retry. With upstream's `redirect=false` call, a dead item fails
-  that call first and the read falls back to the redirect link, where the
-  same answer is seen and counted. Dead items are kept for 24 hours and listed at
+  transient retry. The redirect-link fallback is retained and will be checked
+  in the live stream verification with upstream's `redirect=false` call.
+  Dead items are kept for 24 hours and listed at
   `GET /api/refusals/dead` (hash, name, category, file, provider and error
   code, newest first, `?since=<RFC 3339>` narrows it), so a job next to the
   arrs can drop the download before an import reaches it.
@@ -81,9 +81,12 @@ link service part of #411 is left.
 - [#412](https://github.com/sirrobot01/decypharr/pull/412), [#440](https://github.com/sirrobot01/decypharr/pull/440), [#419](https://github.com/sirrobot01/decypharr/pull/419), [#422](https://github.com/sirrobot01/decypharr/pull/422), [#417](https://github.com/sirrobot01/decypharr/pull/417) and [#448](https://github.com/sirrobot01/decypharr/pull/448) were cherry-picked
   from `beta` and are part of v2.7.2.
 - [#442](https://github.com/sirrobot01/decypharr/pull/442) is replaced by upstream [#441](https://github.com/sirrobot01/decypharr/pull/441), which cancels the post-download
-  action of a deleted entry.
+  action of a deleted entry. The fork retains #442's late-update guard,
+  cancellation wait of up to 15 seconds and partial download cleanup.
 - [#424](https://github.com/sirrobot01/decypharr/pull/424) is replaced by upstream [#423](https://github.com/sirrobot01/decypharr/pull/423), which keeps a shared folder in the
   name index on delete.
+  `8fdf791`'s one-time startup reconciliation was dropped at v2.7.2 because
+  the deployed patched builds had already run it.
 - [#406](https://github.com/sirrobot01/decypharr/pull/406) is replaced by upstream's own AllDebrid fix, which waits until every
   file of a ready magnet has a link.
 

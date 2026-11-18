@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/sirrobot01/decypharr/internal/config"
@@ -333,13 +332,10 @@ func (m *Manager) processQueuedTorrent(entry *storage.Entry) {
 }
 
 func (m *Manager) processAction(entry *storage.Entry) {
-	key := strings.ToLower(entry.InfoHash)
-	ctx, cancel := context.WithCancelCause(m.downloader.operationContext())
-	m.queue.running.Store(key, cancel)
-	defer func() {
-		m.queue.running.Delete(key)
-		cancel(nil)
-	}()
+	// Deleting the entry cancels ctx. Until release, the queue refuses to
+	// write the entry back.
+	ctx, release := m.queue.track(m.downloader.operationContext(), entry.InfoHash)
+	defer release()
 
 	entry.Status = debridTypes.TorrentStatusDownloaded
 	entry.UpdatedAt = time.Now()
