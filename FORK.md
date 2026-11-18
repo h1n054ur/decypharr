@@ -1,7 +1,7 @@
 # Fork notes
 
 This is a personal fork of [sirrobot01/decypharr](https://github.com/sirrobot01/decypharr). The branch
-`main-patched` is upstream tag `v2.7` plus the fixes listed below, one commit
+`main-patched` is upstream tag `v2.7.2` plus the fixes listed below, one commit
 each. `main` and the other upstream branches are left as upstream has them, so
 pull requests to upstream still start from a clean base.
 
@@ -10,13 +10,19 @@ rebase.
 
 ## Fixes of my own
 
-- Link validation: a transient HTTP 400 no longer leaves a file unreadable
+- Link validation: a failed validation no longer leaves a file unreadable
   until a restart. Upstream issue [#434](https://github.com/sirrobot01/decypharr/issues/434), offered upstream as
-  [#450](https://github.com/sirrobot01/decypharr/pull/450).
+  [#450](https://github.com/sirrobot01/decypharr/pull/450). Upstream now
+  treats 400, 403 and 410 as refetchable, so what is left here is the rest:
+  a remembered failure expires after a minute, and an unknown code is
+  retryable instead of permanent.
 - Streaming: sessions reuse the resolved CDN target of a provider redirect
-  link (TorBox `requestdl`), so reconnects, seeks and resumes don't each call
-  the provider API. A throttle that lasts past one wait drops the cached target
-  and refreshes the link, instead of retrying the same link forever.
+  link, so reconnects, seeks and resumes don't each call the provider API. A
+  throttle that lasts past one wait drops the cached target and refreshes the
+  link, instead of retrying the same link forever. Since v2.7.2 upstream asks
+  TorBox for the CDN URL once (`requestdl` with `redirect=false`) and streams
+  that, so for TorBox the cache only comes into play when that call fails and
+  the redirect link is used instead. The throttle recovery applies either way.
 - Uncached refusals: releases refused because no provider has them cached are
   kept for 24 hours and listed at `GET /api/refusals/uncached`
   (`queue_cleanup.record_uncached_refusals`, on by default). The arrs count
@@ -44,7 +50,9 @@ rebase.
   2 minutes (about 6 seconds of waits) the file is marked dead for 6 hours:
   the read fails with EIO and later opens fail at once without a provider
   call. A good answer clears the count, and plain 5xx answers keep the old
-  transient retry. Dead items are kept for 24 hours and listed at
+  transient retry. With upstream's `redirect=false` call, a dead item fails
+  that call first and the read falls back to the redirect link, where the
+  same answer is seen and counted. Dead items are kept for 24 hours and listed at
   `GET /api/refusals/dead` (hash, name, category, file, provider and error
   code, newest first, `?since=<RFC 3339>` narrows it), so a job next to the
   arrs can drop the download before an import reaches it.
@@ -57,29 +65,38 @@ rebase.
   Deletes Decypharr makes itself remove the entry at once as before, and an
   item the provider dropped goes on the first refresh after the grace.
 
-## Upstream commits from `beta` (after v2.7)
-
-[#412](https://github.com/sirrobot01/decypharr/pull/412), [#440](https://github.com/sirrobot01/decypharr/pull/440), [#419](https://github.com/sirrobot01/decypharr/pull/419), [#422](https://github.com/sirrobot01/decypharr/pull/422), [#417](https://github.com/sirrobot01/decypharr/pull/417) and [#448](https://github.com/sirrobot01/decypharr/pull/448), cherry-picked
-with `-x`.
-
 ## Open upstream pull requests
 
 Each one is squashed into a single commit whose title ends in "(upstream #N)":
-[#445](https://github.com/sirrobot01/decypharr/pull/445), [#444](https://github.com/sirrobot01/decypharr/pull/444), [#411](https://github.com/sirrobot01/decypharr/pull/411), [#424](https://github.com/sirrobot01/decypharr/pull/424), [#418](https://github.com/sirrobot01/decypharr/pull/418), [#367](https://github.com/sirrobot01/decypharr/pull/367), [#432](https://github.com/sirrobot01/decypharr/pull/432), [#442](https://github.com/sirrobot01/decypharr/pull/442),
-[#406](https://github.com/sirrobot01/decypharr/pull/406), [#394](https://github.com/sirrobot01/decypharr/pull/394) and [#340](https://github.com/sirrobot01/decypharr/pull/340).
+[#445](https://github.com/sirrobot01/decypharr/pull/445), [#444](https://github.com/sirrobot01/decypharr/pull/444), [#411](https://github.com/sirrobot01/decypharr/pull/411), [#418](https://github.com/sirrobot01/decypharr/pull/418), [#367](https://github.com/sirrobot01/decypharr/pull/367), [#432](https://github.com/sirrobot01/decypharr/pull/432), [#394](https://github.com/sirrobot01/decypharr/pull/394) and
+[#340](https://github.com/sirrobot01/decypharr/pull/340).
 
-Small changes needed to build or pass the tests on v2.7 are folded into the
-same commit (a missing import in #340, test fixtures in #411 and #445).
+Small changes needed to build or pass the tests are folded into the same
+commit (a missing import in #340, test fixtures in #411 and #445). Upstream
+[#439](https://github.com/sirrobot01/decypharr/pull/439) now refetches an expired cached link in the account, so only the
+link service part of #411 is left.
+
+## Dropped at the v2.7.2 rebase
+
+- [#412](https://github.com/sirrobot01/decypharr/pull/412), [#440](https://github.com/sirrobot01/decypharr/pull/440), [#419](https://github.com/sirrobot01/decypharr/pull/419), [#422](https://github.com/sirrobot01/decypharr/pull/422), [#417](https://github.com/sirrobot01/decypharr/pull/417) and [#448](https://github.com/sirrobot01/decypharr/pull/448) were cherry-picked
+  from `beta` and are part of v2.7.2.
+- [#442](https://github.com/sirrobot01/decypharr/pull/442) is replaced by upstream [#441](https://github.com/sirrobot01/decypharr/pull/441), which cancels the post-download
+  action of a deleted entry.
+- [#424](https://github.com/sirrobot01/decypharr/pull/424) is replaced by upstream [#423](https://github.com/sirrobot01/decypharr/pull/423), which keeps a shared folder in the
+  name index on delete.
+- [#406](https://github.com/sirrobot01/decypharr/pull/406) is replaced by upstream's own AllDebrid fix, which waits until every
+  file of a ready magnet has a link.
 
 ## Left out for now
 
-- #402 and #369 touch the same code as the #434 fix. #402 is a subset of it.
+- #402 and #369 touch the same code as the #434 fix. #402 is a subset of what
+  upstream now does.
   #369 makes 429 and 503 refetchable, which spends more provider API calls
   under load.
 - #370 is covered by #444, which does the same cache check and also handles
   the add limit.
 - #430 duplicates #432.
-- #426 and #410 conflict with the changes above. #348 no longer builds on v2.7.
+- #426 and #410 conflict with the changes above. #348 no longer built on v2.7 (not checked again on v2.7.2).
 - Larger features and older pull requests written against earlier code.
 
 ## Image builds
@@ -87,7 +104,8 @@ same commit (a missing import in #340, test fixtures in #411 and #445).
 `.forgejo/` holds a Forgejo Actions workflow that builds the image with kaniko
 and pushes it to a registry set in the repository's Actions variables. GitHub
 ignores it. The image tag is `TAG` in `.forgejo/workflows/image.yml`, and it
-gets bumped for every new build, since a tag is never pushed twice.
+gets bumped for every new build, since a tag is never pushed twice. Tags read
+`v<upstream version>-patched-<n>`, and `n` starts again at 1 on a new base.
 
 ## Keeping up with upstream
 
@@ -98,7 +116,7 @@ change. A new upstream release gets the commits rebased onto it:
 git remote add upstream https://github.com/sirrobot01/decypharr.git   # once
 git fetch upstream --tags
 git switch -c main-patched-vX.Y main-patched
-git rebase --onto vX.Y v2.7    # v2.7 is the base the branch has now
+git rebase --onto vX.Y v2.7.2    # v2.7.2 is the base the branch has now
 # Drop commits upstream has merged (check the "(upstream #N)" titles against
 # upstream's log), fix conflicts, run go vet ./... and go test ./...,
 # bump TAG in .forgejo/workflows/image.yml, then:
