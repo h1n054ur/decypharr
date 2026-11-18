@@ -56,23 +56,11 @@ LABEL org.opencontainers.image.title="decypharr"
 LABEL org.opencontainers.image.authors="sirrobot01"
 LABEL org.opencontainers.image.documentation="https://github.com/sirrobot01/decypharr/blob/main/README.md"
 
-# Install dependencies including rclone (from binary).
+# Install dependencies including rclone.
 # libstdc++/libgcc: required at runtime by rapidyenc's C++ decoder.
 RUN sed -i 's|dl-cdn.alpinelinux.org/alpine|mirror.xtom.com.hk/alpine|g' /etc/apk/repositories && \
-    apk add --no-cache fuse3 ca-certificates su-exec shadow curl unzip tzdata libstdc++ libgcc && \
-    echo "user_allow_other" >> /etc/fuse.conf && \
-    case "$(uname -m)" in \
-        x86_64) ARCH=amd64 ;; \
-        aarch64) ARCH=arm64 ;; \
-        armv7l|armv7) ARCH=arm ;; \
-        *) echo "Unsupported architecture: $(uname -m)" && exit 1 ;; \
-    esac && \
-    curl -O "https://downloads.rclone.org/rclone-current-linux-${ARCH}.zip" && \
-    unzip "rclone-current-linux-${ARCH}.zip" && \
-    cp rclone-*/rclone /usr/local/bin/ && \
-    chmod +x /usr/local/bin/rclone && \
-    rm -rf rclone-* && \
-    apk del curl unzip
+    apk add --no-cache fuse3 ca-certificates su-exec shadow rclone tzdata libstdc++ libgcc && \
+    echo "user_allow_other" >> /etc/fuse.conf
 
 # Copy binaries and entrypoint
 COPY --from=builder /decypharr /usr/bin/decypharr
