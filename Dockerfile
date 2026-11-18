@@ -16,7 +16,7 @@ COPY --from=xx / /
 WORKDIR /app
 
 # Install cross-compilation toolchain via xx
-RUN apk add --no-cache clang lld && \
+RUN apk add --no-cache clang lld file && \
     xx-apk add --no-cache gcc g++ musl-dev libc-dev fuse-dev
 
 COPY go.mod go.sum ./
