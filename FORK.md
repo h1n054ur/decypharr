@@ -85,8 +85,9 @@ link service part of #411 is left.
   cancellation wait of up to 15 seconds and partial download cleanup.
 - [#424](https://github.com/sirrobot01/decypharr/pull/424) is replaced by upstream [#423](https://github.com/sirrobot01/decypharr/pull/423), which keeps a shared folder in the
   name index on delete.
-  `8fdf791`'s one-time startup reconciliation was dropped at v2.7.2 because
-  the deployed patched builds had already run it.
+  `8fdf791`'s one-time startup reconciliation was dropped at v2.7.2. Our own
+  deployment had already run it. An install that upgrades straight from a
+  build older than `8fdf791` does not get that repair.
 - [#406](https://github.com/sirrobot01/decypharr/pull/406) is replaced by upstream's own AllDebrid fix, which waits until every
   file of a ready magnet has a link.
 
