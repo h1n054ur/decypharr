@@ -33,8 +33,8 @@ env:
   REGISTRY_USER: ${{ vars.REGISTRY_USER }}
   REGISTRY_MIRROR: ${{ vars.REGISTRY_MIRROR }}
   # Upstream version this branch is based on, plus the patch number.
-  TAG: v2.7-patched-1
-  VERSION: "2.7"
+  TAG: v2.7.2-patched-1
+  VERSION: "2.7.2"
   CHANNEL: stable
   REGCTL_VERSION: v0.11.6
   REGCTL_SHA256: 8e0e62a497fcdb8048d18aa927a139613176ba0531f412bc541044e28f9856bd
